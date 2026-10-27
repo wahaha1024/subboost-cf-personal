@@ -238,7 +238,10 @@ export async function refreshNodeSnapshot(
         rawUserInfo,
         fetched.ok ? fetched.nodes : []
       );
-      if (hasSubscriptionUserInfo(resolvedUserInfo)) {
+      // 该源若配置了专用 userinfo 抓取（通常是需要 Clash UA 才返回流量头的机场），
+      // 累加职责交给后面的补充抓取，避免同一份用量按两种口径各算一次。
+      const hasDedicatedUserInfo = shouldFetchSupplementalUserInfoForSource(source);
+      if (!hasDedicatedUserInfo && hasSubscriptionUserInfo(resolvedUserInfo)) {
         mergeSubscriptionUserInfo(subscriptionInfo, resolvedUserInfo);
       }
 
@@ -343,9 +346,11 @@ export async function refreshNodeSnapshot(
       if (!headers) continue;
       mergeResponseMetadata(headers);
       const header = headers["subscription-userinfo"];
+      if (!header) continue;
+      // 专用 userinfo 抓取拿到的是机场真实用量，作为该源唯一的累加来源。
       mergeSourceSubscriptionInfo(
         source.id,
-        header ? resolveSubscriptionUserInfo(parseSubscriptionUserInfo(header)) : undefined
+        resolveSubscriptionUserInfo(parseSubscriptionUserInfo(header))
       );
     }
   }

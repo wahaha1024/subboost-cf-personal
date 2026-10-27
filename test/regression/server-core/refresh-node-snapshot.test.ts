@@ -311,4 +311,72 @@ describe("public refreshNodeSnapshot extra branch coverage", () => {
     expect(result.savedSources.find((source) => source.id === "url-a")).toHaveProperty("subscriptionUserInfo");
     expect(result.savedSources.find((source) => source.id === "url-e")).not.toHaveProperty("subscriptionUserInfo");
   });
+
+  it("counts each source userinfo once when a dedicated userinfo fetch is configured", async () => {
+    const fetchUrlNodes = vi.fn(async (source: Parameters<FetchUrlNodes>[0]): ReturnType<FetchUrlNodes> => ({
+      ok: true,
+      nodes: [{ ...baseNode, name: `Node ${source.id}`, server: `${source.id}.example.com` }],
+      headers:
+        source.id === "url-a"
+          ? { "subscription-userinfo": "upload=2048; download=4096; total=1048576" }
+          : { "subscription-userinfo": "upload=8192; download=16384; total=2097152" },
+    }));
+    const fetchUrlUserInfo = vi.fn(async (_source: Parameters<FetchUrlUserInfo>[0]): ReturnType<FetchUrlUserInfo> => ({
+      "subscription-userinfo": "upload=32768; download=65536; total=4194304",
+    }));
+
+    const result = await refreshNodeSnapshot({
+      config: {
+        sources: [
+          { id: "url-a", type: "url", content: "https://a.example.com/sub" },
+          {
+            id: "url-b",
+            type: "url",
+            content: "https://b.example.com/sub",
+            userinfoUrl: "https://b.example.com/userinfo",
+            userinfoUserAgent: "clash.meta/1.19.24",
+          },
+        ],
+      },
+      urls: [],
+      storedNodes: [],
+      fetchUrlNodes,
+      fetchUrlUserInfo,
+    });
+
+    expect(fetchUrlUserInfo).toHaveBeenCalledTimes(1);
+    // url-a 用响应头，url-b 用专用 userinfo 抓取，各自只累加一次。
+    expect(result.subscriptionInfo.upload).toBe(2048 + 32768);
+    expect(result.subscriptionInfo.download).toBe(4096 + 65536);
+    expect(result.subscriptionInfo.total).toBe(1048576 + 4194304);
+  });
+
+  it("ignores a dedicated userinfo response that carries no subscription-userinfo header", async () => {
+    const fetchUrlNodes = vi.fn(async (source: Parameters<FetchUrlNodes>[0]): ReturnType<FetchUrlNodes> => ({
+      ok: true,
+      nodes: [{ ...baseNode, name: `Node ${source.id}`, server: `${source.id}.example.com` }],
+      headers: { "subscription-userinfo": "upload=2048; download=4096; total=1048576" },
+    }));
+    const fetchUrlUserInfo = vi.fn(async (_source: Parameters<FetchUrlUserInfo>[0]): ReturnType<FetchUrlUserInfo> => ({}));
+
+    const result = await refreshNodeSnapshot({
+      config: {
+        sources: [
+          {
+            id: "url-a",
+            type: "url",
+            content: "https://a.example.com/sub",
+            userinfoUrl: "https://a.example.com/userinfo",
+          },
+        ],
+      },
+      urls: [],
+      storedNodes: [],
+      fetchUrlNodes,
+      fetchUrlUserInfo,
+    });
+
+    // 专用抓取没有流量头时不回退到响应头，避免同一源的口径来回切换。
+    expect(result.subscriptionInfo.total).toBeUndefined();
+  });
 });
