@@ -190,7 +190,8 @@ describe("UI component coverage: custom proxy groups", () => {
     result = renderPanel();
     sourceCard = result.moduleCards[0];
     advancedElement = sourceCard.renderAdvancedContent("rules", 0) as React.ReactElement<Record<string, any>>;
-    expect(advancedElement.props.rulesContent).toBeNull();
+    // 规则数量为 0 时也要把规则区内容传下去，否则节点编辑区会被顶掉。
+    expect(advancedElement.props.rulesContent).toBe("rules");
     advancedElement.props.onChange({ includeAll: true });
     expect(mocks.store.updateCustomProxyGroup).toHaveBeenCalledWith(sourceGroup.id, {
       advanced: { excludeRegex: "test", includeAll: true },

@@ -199,6 +199,7 @@ describe("ProxyGroupsCustomGroupsPanel card props", () => {
       advanced: { sourceIds: ["old-source"], regions: ["us"] },
     });
     expect(advanced.props.rulesContent).not.toBeNull();
-    expect(emptyAdvanced.props.rulesContent).toBeNull();
+    // 规则数量为 0 时同样保留规则区内容，节点编辑区才不会被顶掉。
+    expect(emptyAdvanced.props.rulesContent).not.toBeNull();
   });
 });

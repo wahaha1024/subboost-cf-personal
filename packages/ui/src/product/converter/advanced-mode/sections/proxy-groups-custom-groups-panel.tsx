@@ -516,7 +516,7 @@ export function ProxyGroupsCustomGroupsPanel({
                       })
                     }
                     rulesCount={count}
-                    rulesContent={count > 0 ? content : null}
+                    rulesContent={content}
                   />
                 )}
               />
