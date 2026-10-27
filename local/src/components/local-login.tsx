@@ -28,7 +28,15 @@ function getPostLoginHref(): string {
 }
 
 export function LocalLogin() {
-  const [auth, setAuth] = React.useState<AuthState | null>(null);
+  // 表单默认直接渲染：auth/me 慢或被网络卡住时，不能让登录框一直停在骨架屏。
+  // 服务端也按未初始化处理，SSR 直接吐出可用的表单。
+  const [auth, setAuth] = React.useState<AuthState>({
+    setupRequired: false,
+    authenticated: false,
+    // 本项目是单管理员模式：SSR 默认按此渲染，只显示密码框，与真实状态一致。
+    singleAdminLogin: true,
+    totpEnabled: false,
+  });
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [passwordConfirm, setPasswordConfirm] = React.useState("");
@@ -49,7 +57,9 @@ export function LocalLogin() {
         }
       })
       .catch((loadError) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "加载失败");
+        if (cancelled) return;
+        // auth/me 失败不影响登录：表单已在渲染，用户可以直接输入密码重试。
+        setError(loadError instanceof Error ? loadError.message : "加载失败");
       });
     return () => {
       cancelled = true;
@@ -108,8 +118,7 @@ export function LocalLogin() {
         </div>
 
         <div className="personal-login-card bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 space-y-4">
-          {auth ? (
-            <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-3">
               {(!auth.singleAdminLogin || setupRequired) && <FormField label="管理员账号">
                 <Input
                 autoComplete="username"
@@ -170,10 +179,7 @@ export function LocalLogin() {
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                 {setupRequired ? "创建管理员" : "登录"}
               </Button>
-            </form>
-          ) : (
-            <div className="h-36 animate-pulse rounded-xl bg-white/5" />
-          )}
+          </form>
         </div>
       </div>
     </div>

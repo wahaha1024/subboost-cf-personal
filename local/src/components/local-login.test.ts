@@ -140,13 +140,30 @@ describe("local login component", () => {
     delete (globalThis as any).window;
   });
 
-  it("renders the initial loading card without requiring browser fetch", () => {
+  it("renders a usable login form on first paint without requiring browser fetch", () => {
     const { html } = renderLogin();
 
     expect(html).toContain("欢迎使用 SubBoost");
     expect(html).toContain("href=\"/\"");
     expect(html).toContain("src=\"/logo.png\"");
-    expect(html).toContain("animate-pulse");
+    // 表单默认直接渲染：auth/me 慢或被网络卡住时不能停在骨架屏。
+    expect(mocks.forms).toHaveLength(1);
+    expect(mocks.inputs.some((input) => input.placeholder === "密码")).toBe(true);
+    expect(html).not.toContain("animate-pulse");
+  });
+
+  it("sanitizes TOTP and recovery codes before storing them", () => {
+    const { html } = renderLogin({
+      0: { setupRequired: false, authenticated: false, singleAdminLogin: true, totpEnabled: true },
+    });
+
+    expect(html).toContain("动态验证码或恢复码");
+    const totpInput = mocks.inputs.find((input) => input.placeholder === "6 位动态码或恢复码");
+    expect(totpInput).toEqual(expect.objectContaining({ autoComplete: "one-time-code", maxLength: 16 }));
+
+    // 只保留字母数字和连字符，并按 maxLength=16 截断。
+    totpInput.onChange({ target: { value: "ab-12!@#cd-34-5678-9" } });
+    expect(stateMock.setters[3]).toHaveBeenCalledWith("ab-12cd-34-5678-");
   });
 
   it("loads auth state and redirects authenticated users", async () => {
