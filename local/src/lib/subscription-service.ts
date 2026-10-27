@@ -3,6 +3,10 @@ import { generateClashYaml } from "@subboost/core/generator";
 import { buildGenerateOptionsFromConfig, getEffectiveTestOptions } from "@subboost/core/subscription/config-utils";
 import { buildProxyProvidersFromConfig } from "@subboost/core/subscription/proxy-providers";
 import type { SubscriptionResponseInfo } from "@subboost/core/subscription/subscription-response-info";
+import { normalizeSubscriptionResponseInfo } from "@subboost/core/subscription/subscription-response-info";
+import { resolveSubscriptionUserInfo } from "@subboost/core/subscription/subscription-userinfo";
+import { getNodeSourceIds } from "@subboost/core/subscription/node-source-state";
+import { isSubscriptionInfoNodeName } from "@subboost/core/subscription/info-node-name";
 import type { ParsedNode } from "@subboost/core/types/node";
 import {
   buildManualRefreshFailureResponse,
@@ -417,6 +421,55 @@ export async function refreshSubscription(ownerId: string, id: string) {
   };
 }
 
+/**
+ * 按 config.sources 的顺序对节点做稳定分组重排。
+ * 每个源内部保持原有相对顺序；未能匹配到任何源的节点保留在末尾。
+ */
+function orderNodesBySourceOrder(
+  nodes: ParsedNode[],
+  config: Record<string, unknown>
+): ParsedNode[] {
+  const rawSources = Array.isArray(config.sources) ? config.sources : [];
+  const sourceOrder: string[] = [];
+  for (const item of rawSources) {
+    if (!item || typeof item !== "object") continue;
+    const id = (item as Record<string, unknown>).id;
+    if (typeof id === "string" && id.trim()) sourceOrder.push(id.trim());
+  }
+  if (sourceOrder.length < 2) return nodes;
+
+  const rank = new Map<string, number>();
+  sourceOrder.forEach((id, index) => rank.set(id, index));
+
+  const rankOf = (node: ParsedNode): number => {
+    const ids = getNodeSourceIds(node);
+    let best = Number.MAX_SAFE_INTEGER;
+    for (const id of ids) {
+      const r = rank.get(id);
+      if (r !== undefined && r < best) best = r;
+    }
+    return best;
+  };
+
+  return nodes
+    .map((node, index) => ({
+      node,
+      index,
+      rank: rankOf(node),
+      // 机场把用量/到期等信息写成节点时，这些节点的名字会随数值变化，
+      // 合并去重后容易漂到源内末尾。这里把它们固定在所属源的最前面。
+      infoRank: isSubscriptionInfoNodeName(node.name) ? 0 : 1,
+    }))
+    .sort((a, b) =>
+      a.rank === b.rank
+        ? a.infoRank === b.infoRank
+          ? a.index - b.index
+          : a.infoRank - b.infoRank
+        : a.rank - b.rank
+    )
+    .map((entry) => entry.node);
+}
+
 export async function generateSubscriptionYaml(token: string, recordAccess = true): Promise<GeneratedSubscriptionYaml | null> {
   const row = await prisma.subscription.findUnique({ where: { token }, include: { autoUpdateState: true } });
   if (!row) return null;
@@ -424,19 +477,26 @@ export async function generateSubscriptionYaml(token: string, recordAccess = tru
   const { testUrl, testInterval } = getEffectiveTestOptions(secrets.config);
   const proxyProviders = buildProxyProvidersFromConfig(secrets.config, { testUrl, testInterval });
   if (secrets.nodes.length === 0 && !proxyProviders) return null;
+  // 按用户配置的 sources 顺序重排节点：第一个源的节点排在最前，
+  // 保证「节点选择」里的顺序与源列表一致（信息节点跟随所属源的位置）。
+  const orderedNodes = orderNodesBySourceOrder(secrets.nodes, secrets.config);
   const yaml = generateClashYaml(
     buildGenerateOptionsFromConfig(secrets.config, {
-      nodes: secrets.nodes,
+      nodes: orderedNodes,
       proxyProviders,
     })
   );
   if (recordAccess) {
     await prisma.subscription.update({ where: { id: row.id }, data: { lastAccessedAt: new Date() } });
   }
+  const resolvedUserInfo = resolveSubscriptionUserInfo(
+    normalizeSubscriptionResponseInfo(secrets.subscriptionInfo) ?? {},
+    secrets.nodes
+  );
   return {
     yaml,
     name: row.name,
-    subscriptionInfo: secrets.subscriptionInfo,
+    subscriptionInfo: { ...resolvedUserInfo, ...(secrets.subscriptionInfo as Record<string, unknown>) },
     cacheExpirySeconds: CACHE_TTL_SECONDS,
     autoUpdateIntervalSeconds: row.autoUpdateInterval,
     isAdmin: true,

@@ -132,6 +132,17 @@ describe("subscription user info helpers", () => {
     expect(resolveSubscriptionUserInfo({ upload: 2048, total: 1024 }, [infoNode("剩余流量: 999 B")])).toEqual({});
   });
 
+  it("falls back to the remaining quota when the provider never reports a total", () => {
+    // 只有“剩余流量”时按总量上报，客户端至少能画出剩余流量条。
+    expect(resolveSubscriptionUserInfo({}, [infoNode("剩余流量: 12 GB")])).toEqual({
+      upload: 0,
+      download: 0,
+      total: 12 * 1024 ** 3,
+    });
+    // 太小的剩余量多半是解析噪声，不当作套餐总量。
+    expect(resolveSubscriptionUserInfo({}, [infoNode("剩余流量: 1 KB")])).toEqual({});
+  });
+
   it("ignores unusable node labels and invalid date hints", () => {
     expect(
       resolveSubscriptionUserInfo(

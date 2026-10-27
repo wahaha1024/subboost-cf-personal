@@ -241,6 +241,16 @@ function buildTrafficInfoFromNodeHints(
     };
   }
 
+  // 机场只给出“剩余流量”而没有套餐总量时，以剩余量作为总量上报，
+  // 客户端至少能显示剩余流量条，而不是完全看不到流量信息。
+  if (typeof hints.remainingBytes === "number" && Number.isFinite(hints.remainingBytes) && hints.remainingBytes > 1024) {
+    return {
+      upload: 0,
+      download: 0,
+      total: hints.remainingBytes,
+    };
+  }
+
   return {};
 }
 

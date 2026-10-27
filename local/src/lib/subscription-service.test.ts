@@ -650,4 +650,76 @@ describe("local subscription service", () => {
     mocks.buildProxyProvidersFromConfig.mockReturnValueOnce({ provider: { url: "https://example.com/provider.yaml" } });
     await expect(generateSubscriptionYaml("provider-only")).resolves.toMatchObject({ yaml: "mixed-port: 7890\n" });
   });
+
+  it("orders nodes by the configured source order and pins info nodes to the top of their source", async () => {
+    const withSource = (name: string, sourceIds: string[]) => ({ ...node(name), _sourceIds: sourceIds });
+    mocks.prisma.subscription.findUnique.mockResolvedValueOnce(
+      row({
+        encryptedNodes: JSON.stringify([
+          withSource("Second-1", ["source-2"]),
+          withSource("剩余流量: 10 GB", ["source-2"]),
+          withSource("First-1", ["source-1"]),
+          withSource("Unmatched", []),
+          withSource("Third-1", ["source-3"]),
+        ]),
+        encryptedConfig: JSON.stringify({
+          sources: [
+            { id: "source-1", type: "url", content: "https://example.com/1" },
+            { id: "source-2", type: "url", content: "https://example.com/2" },
+            { id: "source-3", type: "url", content: "https://example.com/3" },
+          ],
+        }),
+      })
+    );
+
+    await generateSubscriptionYaml("ordered");
+
+    const passedNodes = mocks.buildGenerateOptionsFromConfig.mock.calls.at(-1)?.[1].nodes as Array<{ name: string }>;
+    expect(passedNodes.map((entry) => entry.name)).toEqual([
+      "First-1",
+      // 信息节点固定在所属源最前面，避免名字随数值变化后漂到末尾。
+      "剩余流量: 10 GB",
+      "Second-1",
+      "Third-1",
+      "Unmatched",
+    ]);
+  });
+
+  it("keeps the original node order when a single source is configured", async () => {
+    mocks.prisma.subscription.findUnique.mockResolvedValueOnce(
+      row({
+        encryptedNodes: JSON.stringify([
+          { ...node("Second-1"), _sourceIds: ["source-1"] },
+          { ...node("First-1"), _sourceIds: ["source-1"] },
+        ]),
+      })
+    );
+
+    await generateSubscriptionYaml("single-source");
+
+    const passedNodes = mocks.buildGenerateOptionsFromConfig.mock.calls.at(-1)?.[1].nodes as Array<{ name: string }>;
+    expect(passedNodes.map((entry) => entry.name)).toEqual(["Second-1", "First-1"]);
+  });
+
+  it("fills subscription info from node hints while letting stored values win", async () => {
+    mocks.prisma.subscription.findUnique.mockResolvedValueOnce(
+      row({
+        encryptedNodes: JSON.stringify([node("剩余流量: 12 GB"), node("套餐到期: 2026-03-01")]),
+        encryptedSubscriptionInfo: JSON.stringify({}),
+      })
+    );
+
+    const generated = await generateSubscriptionYaml("info-fallback");
+    expect(generated?.subscriptionInfo).toMatchObject({ total: 12 * 1024 ** 3 });
+
+    mocks.prisma.subscription.findUnique.mockResolvedValueOnce(
+      row({
+        encryptedNodes: JSON.stringify([node("剩余流量: 12 GB")]),
+        encryptedSubscriptionInfo: JSON.stringify({ upload: 2048, total: 4096 }),
+      })
+    );
+
+    const stored = await generateSubscriptionYaml("info-stored");
+    expect(stored?.subscriptionInfo).toMatchObject({ upload: 2048, total: 4096 });
+  });
 });
